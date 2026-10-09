@@ -1,5 +1,5 @@
-# Desktop interface for the rugby gym progression application.
-# TODO: Clean up imports later, some might not be needed anymore?
+# Desktop interface for the rugby gym progression app
+
 import sqlite3
 import tkinter as tk
 from datetime import date
@@ -15,7 +15,7 @@ from algorithms import (
 )
 from validation import GOALS, POSITIONS
 
-# Main app class - keeping it all together here because splitting into multiple files is overkill rn
+# Main app class - keeping it all together
 class RugbyApp:
     BACKGROUND = "#f4f7f6"
     SIDEBAR = "#173f35"
@@ -30,7 +30,7 @@ class RugbyApp:
         self.exercises = []
         self.content = None # will be set up later
         
-        # Window setup stuff
+        # Window setup
         self.root.title("Rugby Gym Progression")
         self.root.geometry("1100x720")
         self.root.minsize(900, 620)
@@ -38,13 +38,13 @@ class RugbyApp:
         
         self.set_styles()
         
-        # make sure db tables exist before doing anything else
+        #Making sure that the database tables exists before adding anything else
         db.initialise_database()
         
         self.show_login()
 
     def set_styles(self):
-        # UI styling using ttk
+        #UI styling using standard Tkinter
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TFrame", background=self.BACKGROUND)
@@ -73,12 +73,12 @@ class RugbyApp:
         style.configure("Treeview.Heading", font=("Arial", 10, "bold"))
 
     def clear_root(self):
-        # Nukes everything in root to redraw screens
+        #Nukes everything in root to redraw screens
         for w in self.root.winfo_children():
             w.destroy()
 
     def heading(self, title, explanation):
-        # helper to keep page titles consistent
+        #Helper to keep page titles consistent
         ttk.Label(self.content, text=title, style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             self.content,
@@ -88,7 +88,7 @@ class RugbyApp:
         ).pack(anchor="w", pady=(5, 20))
 
     def labelled_entry(self, parent, label, variable, row, show=None):
-        # Quick helper for form rows
+        #Helper to make rows
         ttk.Label(parent, text=label, style="Card.TLabel").grid(
             row=row, column=0, sticky="w", pady=7, padx=(0, 16)
         )
@@ -211,7 +211,7 @@ class RugbyApp:
     def build_main_window(self):
         self.clear_root()
         
-        # Sidebar nav
+        #Sidebar navigation
         sidebar = tk.Frame(self.root, bg=self.SIDEBAR, width=225)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
