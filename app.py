@@ -8,8 +8,10 @@ from tkinter import messagebox, ttk
 import database as db
 from algorithms import (
     TARGET_REPS,
+    WORKOUT_TYPES,
     build_next_workout,
     calculate_statistics,
+    estimated_1rm,
     group_history_by_exercise,
     progressive_overload,
 )
@@ -247,15 +249,15 @@ class RugbyApp:
                 command=command,
                 anchor="w",
                 relief="flat",
-                bg=self.SIDEBAR,
-                fg="white",
-                activebackground="#245b4e",
-                activeforeground="white",
+                bg="#a8db63",
+                fg="black",
+                activebackground="#c7ed98",
+                activeforeground="black",
                 font=("Arial", 11),
                 padx=22,
                 pady=11,
                 cursor="hand2",
-            ).pack(fill="x")
+            ).pack(fill="x", pady=2)
 
         tk.Label(
             sidebar,
@@ -271,9 +273,10 @@ class RugbyApp:
             text="Sign out",
             command=self.sign_out,
             relief="flat",
-            bg="#245b4e",
-            fg="white",
-            activebackground="#2d6b5c",
+            bg="#a8db63",
+            fg="black",
+            activebackground="#c7ed98",
+            activeforeground="black",
             font=("Arial", 10),
             padx=16,
             pady=8,
@@ -379,106 +382,194 @@ class RugbyApp:
             return False
         return True
 
+    def get_muscle_groups(self):
+        groups = []
+        for exercise in self.exercises:
+            if exercise["category"] not in groups:
+                groups.append(exercise["category"])
+        return groups
+
+    def get_exercises_for_group(self, muscle_group):
+        exercise_names = []
+        for exercise in self.exercises:
+            if exercise["category"] == muscle_group:
+                exercise_names.append(exercise["name"])
+        return exercise_names
+
     def show_log_workout(self):
         if not self.require_profile():
             return
-            
+
         self.clear_content()
         self.heading(
             "Log workout",
-            "Save one exercise at a time. The same date represents one session.",
+            "Choose how many exercises you completed, then enter each exercise below.",
         )
-        
-        form = ttk.Frame(self.content, style="Card.TFrame", padding=22)
-        form.pack(fill="x")
-        
-        self.workout_vars = {
-            "date": tk.StringVar(value=date.today().isoformat()),
-            "exercise": tk.StringVar(value=self.exercises[0]["name"]),
-            "sets": tk.StringVar(value="1"),
-            "target_reps": tk.StringVar(value=str(TARGET_REPS[self.profile["goal"]])),
-            "reps": tk.StringVar(value=str(TARGET_REPS[self.profile["goal"]])),
-            "weight": tk.StringVar(),
-            "rpe": tk.StringVar(value="7"),
-        }
-        
-        labels = [
-            ("Workout date (YYYY-MM-DD)", "date"),
-            ("Sets with identical results", "sets"),
-            ("Planned reps per set", "target_reps"),
-            ("Completed reps per set", "reps"),
-            ("External load (kg)", "weight"),
-            ("RPE (1–10)", "rpe"),
-        ]
-        
-        self.labelled_entry(form, labels[0][0], self.workout_vars["date"], 0)
-        
-        ttk.Label(form, text="Exercise", style="Card.TLabel").grid(
-            row=1, column=0, sticky="w", pady=7
+
+        setup = ttk.Frame(self.content, style="Card.TFrame", padding=14)
+        setup.pack(fill="x", pady=(0, 14))
+
+        self.workout_date_var = tk.StringVar(value=date.today().isoformat())
+        self.exercise_count_var = tk.StringVar(value="1")
+
+        ttk.Label(setup, text="Workout date", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
         )
-        
-        # Pull exercise names out for the dropdown menu
-        exercise_names = []
-        for e in self.exercises:
-            exercise_names.append(e["name"])
-            
+        ttk.Entry(setup, textvariable=self.workout_date_var, width=14).grid(
+            row=0, column=1, sticky="w", padx=(0, 24)
+        )
+        ttk.Label(setup, text="Number of exercises", style="Card.TLabel").grid(
+            row=0, column=2, sticky="w", padx=(0, 8)
+        )
         ttk.Combobox(
-            form,
-            values=exercise_names,
-            textvariable=self.workout_vars["exercise"],
+            setup,
+            values=list(range(1, 11)),
+            textvariable=self.exercise_count_var,
             state="readonly",
-            width=29,
-        ).grid(row=1, column=1, sticky="ew", pady=7)
-        
-        for row_num, (lbl, k) in enumerate(labels[1:], start=2):
-            self.labelled_entry(form, lbl, self.workout_vars[k], row_num)
-            
+            width=5,
+        ).grid(row=0, column=3, sticky="w", padx=(0, 14))
         ttk.Button(
-            form,
-            text="Save exercise",
+            setup, text="Create form", command=self.create_workout_rows
+        ).grid(row=0, column=4, sticky="w")
+
+        self.workout_rows_frame = ttk.Frame(self.content, style="Card.TFrame", padding=12)
+        self.workout_rows_frame.pack(fill="x")
+        self.workout_rows = []
+        self.create_workout_rows()
+
+        ttk.Button(
+            self.content,
+            text="Save whole workout",
             style="Primary.TButton",
             command=self.save_workout,
-        ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(15, 3))
-        
-        form.columnconfigure(1, weight=1)
-        
+        ).pack(fill="x", pady=(14, 0))
+
         ttk.Label(
             self.content,
-            text="Only group sets when load, reps, target and RPE are identical. Otherwise save separate one-set entries. RPE 8 ≈ two reps left; 9 ≈ one; 10 ≈ none.",
+            text="Each row is one exercise. Only group sets when load, reps, target and RPE are identical. RPE 8 ≈ two reps left; 9 ≈ one; 10 ≈ none.",
             style="Muted.TLabel",
             wraplength=760,
         ).pack(anchor="w", pady=14)
 
+    def create_workout_rows(self):
+        for widget in self.workout_rows_frame.winfo_children():
+            widget.destroy()
+
+        self.workout_rows = []
+        headers = ("#", "Muscle group", "Exercise", "Sets", "Target", "Reps", "Load kg", "RPE")
+        for column, heading in enumerate(headers):
+            ttk.Label(
+                self.workout_rows_frame,
+                text=heading,
+                style="Card.TLabel",
+                font=("Arial", 9, "bold"),
+            ).grid(row=0, column=column, padx=3, pady=(0, 7))
+
+        number_of_exercises = int(self.exercise_count_var.get())
+        muscle_groups = self.get_muscle_groups()
+        target_reps = str(TARGET_REPS[self.profile["goal"]])
+
+        for index in range(number_of_exercises):
+            values = {
+                "muscle_group": tk.StringVar(value=muscle_groups[0]),
+                "exercise": tk.StringVar(),
+                "sets": tk.StringVar(value="1"),
+                "target_reps": tk.StringVar(value=target_reps),
+                "reps": tk.StringVar(value=target_reps),
+                "weight": tk.StringVar(),
+                "rpe": tk.StringVar(value="7"),
+            }
+
+            ttk.Label(
+                self.workout_rows_frame, text=str(index + 1), style="Card.TLabel"
+            ).grid(row=index + 1, column=0, padx=3, pady=4)
+
+            group_dropdown = ttk.Combobox(
+                self.workout_rows_frame,
+                values=muscle_groups,
+                textvariable=values["muscle_group"],
+                state="readonly",
+                width=11,
+            )
+            group_dropdown.grid(row=index + 1, column=1, padx=3, pady=4)
+
+            exercise_dropdown = ttk.Combobox(
+                self.workout_rows_frame,
+                textvariable=values["exercise"],
+                state="readonly",
+                width=22,
+            )
+            exercise_dropdown.grid(row=index + 1, column=2, padx=3, pady=4)
+
+            fields = ("sets", "target_reps", "reps", "weight", "rpe")
+            for field_column, field in enumerate(fields, start=3):
+                ttk.Entry(
+                    self.workout_rows_frame,
+                    textvariable=values[field],
+                    width=7,
+                ).grid(row=index + 1, column=field_column, padx=3, pady=4)
+
+            self.workout_rows.append(
+                {"values": values, "exercise_dropdown": exercise_dropdown}
+            )
+            group_dropdown.bind(
+                "<<ComboboxSelected>>",
+                lambda event, row_index=index: self.update_workout_row(row_index),
+            )
+            self.update_workout_row(index)
+
+    def update_workout_row(self, row_index):
+        row = self.workout_rows[row_index]
+        muscle_group = row["values"]["muscle_group"].get()
+        exercise_names = self.get_exercises_for_group(muscle_group)
+        row["exercise_dropdown"]["values"] = exercise_names
+        if exercise_names:
+            row["values"]["exercise"].set(exercise_names[0])
+        else:
+            row["values"]["exercise"].set("")
+
     def save_workout(self):
         try:
-            exercise_id = None
-            selected_name = self.workout_vars["exercise"].get()
-            
-            # find matching id
-            for e in self.exercises:
-                if e["name"] == selected_name:
-                    exercise_id = e["id"]
-                    break
-                    
-            if exercise_id is None:
-                raise ValueError("Choose an exercise from the list.")
+            workout_date = self.workout_date_var.get()
+            entries = []
 
-            entry = {}
-            for k, val in self.workout_vars.items():
-                if k != "exercise":
-                    entry[k] = val.get()
-            entry["exercise_id"] = exercise_id
-            
-            db.add_workout(self.user_id, entry)
+            for row in self.workout_rows:
+                values = row["values"]
+                selected_name = values["exercise"].get()
+                exercise_id = None
+
+                for exercise in self.exercises:
+                    if exercise["name"] == selected_name:
+                        exercise_id = exercise["id"]
+                        break
+
+                if exercise_id is None:
+                    raise ValueError("Choose an exercise for every row.")
+
+                entries.append(
+                    {
+                        "date": workout_date,
+                        "exercise_id": exercise_id,
+                        "sets": values["sets"].get(),
+                        "target_reps": values["target_reps"].get(),
+                        "reps": values["reps"].get(),
+                        "weight": values["weight"].get(),
+                        "rpe": values["rpe"].get(),
+                    }
+                )
+
+            db.add_workout_session(self.user_id, entries)
             messagebox.showinfo(
-                "Workout saved", "The exercise was added to your history."
+                "Workout saved", "The complete workout was added to your history."
             )
-            self.show_recommendations()
+            self.show_history(workout_date)
         except (ValueError, sqlite3.Error) as err:
             messagebox.showerror("Cannot save workout", str(err))
 
-    def make_tree(self, columns, widths):
-        holder = ttk.Frame(self.content)
+    def make_tree(self, columns, widths, parent=None):
+        if parent is None:
+            parent = self.content
+        holder = ttk.Frame(parent)
         holder.pack(fill="both", expand=True)
         
         tree = ttk.Treeview(
@@ -509,71 +600,122 @@ class RugbyApp:
         holder.columnconfigure(0, weight=1)
         return tree
 
-    def show_history(self):
+    def show_history(self, selected_date=None):
         if not self.require_profile():
             return
-            
+
         self.clear_content()
-        history = db.get_history(self.user_id)
-        
+        self.all_history = db.get_history(self.user_id)
+
         self.heading(
             "Workout history",
-            "Saved entries and calculated text statistics. No graphs are used.",
+            "Choose a workout date to view its exercises and calculated results.",
         )
-        
-        statistics = calculate_statistics(history)
-        
-        summary = ttk.Frame(self.content, style="Card.TFrame", padding=14)
-        summary.pack(fill="x", pady=(0, 16))
-        
-        summary_values = [
-            ("Sessions", statistics["sessions"]),
-            ("Working sets", statistics["sets"]),
-            ("Total volume", f"{statistics['volume']:,.0f} kg"),
-            ("Average RPE", statistics["average_rpe"] or "—"),
-            (
-                "Best est. 1RM",
-                f"{statistics['best_estimated_1rm']:g} kg"
-                if statistics["best_estimated_1rm"]
-                else "—",
-            ),
-        ]
-        
-        for idx, (label, val) in enumerate(summary_values):
-            card = ttk.Frame(summary, style="Card.TFrame", padding=8)
-            card.grid(row=0, column=idx, sticky="nsew")
-            ttk.Label(card, text=str(val), style="CardHeading.TLabel").pack()
-            ttk.Label(card, text=label, style="Card.TLabel").pack()
-            summary.columnconfigure(idx, weight=1)
 
-        columns = ("ID", "Date", "Exercise", "Sets", "Target", "Reps", "Load", "RPE")
-        self.history_tree = self.make_tree(columns, (55, 100, 160, 65, 70, 65, 80, 65))
-        
-        for row in history:
-            self.history_tree.insert(
-                "",
-                "end",
-                iid=str(row["id"]),
-                values=(
-                    row["id"],
-                    row["date"],
-                    row["exercise"],
-                    row["sets"],
-                    row["target_reps"],
-                    row["reps"],
-                    f"{row['weight']:g}",
-                    f"{row['rpe']:g}",
-                ),
-            )
-            
-        ttk.Button(
-            self.content, text="Delete selected entry", command=self.delete_selected
-        ).pack(anchor="e", pady=(12, 0))
-        
-        if not history:
+        workout_dates = []
+        for entry in self.all_history:
+            if entry["date"] not in workout_dates:
+                workout_dates.append(entry["date"])
+
+        if not workout_dates:
             ttk.Label(
                 self.content, text="No workouts saved yet.", style="Muted.TLabel"
             ).pack(pady=20)
+            return
+
+        if selected_date not in workout_dates:
+            selected_date = workout_dates[0]
+
+        date_row = ttk.Frame(self.content)
+        date_row.pack(fill="x", pady=(0, 16))
+        ttk.Label(date_row, text="Workout date").pack(side="left", padx=(0, 12))
+
+        self.history_date_var = tk.StringVar(value=selected_date)
+        date_dropdown = ttk.Combobox(
+            date_row,
+            values=workout_dates,
+            textvariable=self.history_date_var,
+            state="readonly",
+            width=18,
+        )
+        date_dropdown.pack(side="left")
+        date_dropdown.bind("<<ComboboxSelected>>", self.update_history_view)
+        ttk.Button(
+            date_row, text="View workout", command=self.update_history_view
+        ).pack(side="left", padx=(10, 0))
+
+        self.history_details = ttk.Frame(self.content)
+        self.history_details.pack(fill="both", expand=True)
+        self.update_history_view()
+
+    def update_history_view(self, event=None):
+        for widget in self.history_details.winfo_children():
+            widget.destroy()
+
+        selected_date = self.history_date_var.get()
+        workout = []
+        for entry in self.all_history:
+            if entry["date"] == selected_date:
+                workout.append(entry)
+
+        statistics = calculate_statistics(workout)
+        exercise_names = set()
+        for entry in workout:
+            exercise_names.add(entry["exercise"])
+
+        summary = ttk.Frame(self.history_details, style="Card.TFrame", padding=14)
+        summary.pack(fill="x", pady=(0, 16))
+        summary_values = [
+            ("Exercises", len(exercise_names)),
+            ("Working sets", statistics["sets"]),
+            ("Total volume", f"{statistics['volume']:,.0f} kg"),
+            ("Average RPE", statistics["average_rpe"] or "—"),
+        ]
+
+        for index, (label, value) in enumerate(summary_values):
+            card = ttk.Frame(summary, style="Card.TFrame", padding=8)
+            card.grid(row=0, column=index, sticky="nsew")
+            ttk.Label(card, text=str(value), style="CardHeading.TLabel").pack()
+            ttk.Label(card, text=label, style="Card.TLabel").pack()
+            summary.columnconfigure(index, weight=1)
+
+        columns = (
+            "ID",
+            "Exercise",
+            "Sets",
+            "Target",
+            "Reps",
+            "Load",
+            "RPE",
+            "Est. 1RM",
+        )
+        widths = (50, 180, 60, 65, 60, 75, 60, 90)
+        self.history_tree = self.make_tree(columns, widths, self.history_details)
+
+        for entry in workout:
+            one_rep_max = estimated_1rm(entry["weight"], entry["reps"])
+            displayed_max = "—" if one_rep_max is None else f"{one_rep_max:g} kg"
+            self.history_tree.insert(
+                "",
+                "end",
+                iid=str(entry["id"]),
+                values=(
+                    entry["id"],
+                    entry["exercise"],
+                    entry["sets"],
+                    entry["target_reps"],
+                    entry["reps"],
+                    f"{entry['weight']:g} kg",
+                    f"{entry['rpe']:g}",
+                    displayed_max,
+                ),
+            )
+
+        ttk.Button(
+            self.history_details,
+            text="Delete selected exercise",
+            command=self.delete_selected,
+        ).pack(anchor="e", pady=(12, 0))
 
     def delete_selected(self):
         selected = self.history_tree.selection()
@@ -585,35 +727,64 @@ class RugbyApp:
             "Delete entry", "Permanently delete the selected workout entry?"
         ):
             try:
+                selected_date = self.history_date_var.get()
                 db.delete_workout(self.user_id, int(selected[0]))
-                self.show_history()
+                self.show_history(selected_date)
             except (ValueError, sqlite3.Error) as err:
                 messagebox.showerror("Cannot delete entry", str(err))
 
-    def show_recommendations(self):
+    def update_guidance_table(self, event=None):
+        for row_id in self.guidance_tree.get_children():
+            self.guidance_tree.delete(row_id)
+
+        selected_group = self.guidance_group_var.get()
+        for exercise in self.exercises:
+            if exercise["category"] == selected_group:
+                weight, action, reason = progressive_overload(
+                    self.guidance_history.get(exercise["id"], []), self.profile
+                )
+                displayed_weight = "—" if weight is None else f"{weight:g} kg"
+                self.guidance_tree.insert(
+                    "",
+                    "end",
+                    values=(exercise["name"], action, displayed_weight, reason),
+                )
+
+    def show_recommendations(self, selected_group=None):
         if not self.require_profile():
             return
             
         self.clear_content()
         history = db.get_history(self.user_id)
-        history_by_exercise = group_history_by_exercise(history)
+        self.guidance_history = group_history_by_exercise(history)
         
         self.heading(
             "Load guidance",
             "Current recommendations are recalculated from your saved history.",
         )
+
+        muscle_groups = self.get_muscle_groups()
+        if selected_group not in muscle_groups:
+            selected_group = muscle_groups[0]
+
+        category_row = ttk.Frame(self.content)
+        category_row.pack(fill="x", pady=(0, 16))
+        ttk.Label(category_row, text="Muscle group").pack(side="left", padx=(0, 12))
+
+        self.guidance_group_var = tk.StringVar(value=selected_group)
+        guidance_dropdown = ttk.Combobox(
+            category_row,
+            values=muscle_groups,
+            textvariable=self.guidance_group_var,
+            state="readonly",
+            width=24,
+        )
+        guidance_dropdown.pack(side="left")
+        guidance_dropdown.bind("<<ComboboxSelected>>", self.update_guidance_table)
         
         columns = ("Exercise", "Action", "Suggested load", "Reason")
-        tree = self.make_tree(columns, (150, 105, 115, 430))
-        
-        for e in self.exercises:
-            weight, action, reason = progressive_overload(
-                history_by_exercise.get(e["id"], []), self.profile
-            )
-            displayed_weight = "—" if weight is None else f"{weight:g} kg"
-            tree.insert(
-                "", "end", values=(e["name"], action, displayed_weight, reason)
-            )
+        self.guidance_tree = self.make_tree(columns, (150, 105, 115, 430))
+        self.update_guidance_table()
             
         ttk.Label(
             self.content,
@@ -625,57 +796,87 @@ class RugbyApp:
     def show_planner(self):
         if not self.require_profile():
             return
-            
+
         self.clear_content()
-        history = db.get_history(self.user_id)
-        plan = build_next_workout(self.exercises, history, self.profile)
-        
+        self.planner_history = db.get_history(self.user_id)
+
         self.heading(
             "Next workout plan",
-            "Four exercises selected from position priorities, recency, RPE and progression status.",
+            "Choose a workout type to receive five exercise suggestions.",
         )
-        
+
+        option_row = ttk.Frame(self.content)
+        option_row.pack(fill="x", pady=(0, 16))
+        ttk.Label(option_row, text="Workout type").pack(side="left", padx=(0, 12))
+
+        self.workout_type_var = tk.StringVar(value=WORKOUT_TYPES[0])
+        workout_dropdown = ttk.Combobox(
+            option_row,
+            values=WORKOUT_TYPES,
+            textvariable=self.workout_type_var,
+            state="readonly",
+            width=22,
+        )
+        workout_dropdown.pack(side="left")
+        workout_dropdown.bind("<<ComboboxSelected>>", self.update_planner_table)
+        ttk.Button(
+            option_row, text="Show workout", command=self.update_planner_table
+        ).pack(side="left", padx=(10, 0))
+
         columns = (
             "Exercise",
             "Category",
-            "Score",
+            "Sets",
             "Target reps",
             "Load guidance",
             "Why selected",
         )
-        
-        tree = self.make_tree(columns, (140, 100, 60, 85, 125, 310))
-        
+
+        self.planner_tree = self.make_tree(columns, (160, 100, 60, 85, 125, 290))
+        self.update_planner_table()
+
+        ttk.Label(
+            self.content,
+            text="Sets and target reps are based on your training goal. Exercise choice also considers training recency, recent RPE and load guidance.",
+            style="Muted.TLabel",
+            wraplength=780,
+        ).pack(anchor="w", pady=12)
+
+    def update_planner_table(self, event=None):
+        for row_id in self.planner_tree.get_children():
+            self.planner_tree.delete(row_id)
+
+        workout_type = self.workout_type_var.get()
+        plan = build_next_workout(
+            self.exercises,
+            self.planner_history,
+            self.profile,
+            workout_type,
+        )
+
         for item in plan:
             load = (
                 item["action"]
                 if item["next_weight"] is None
                 else f"{item['next_weight']:g} kg · {item['action']}"
             )
-            tree.insert(
+            self.planner_tree.insert(
                 "",
                 "end",
                 values=(
                     item["exercise"],
                     item["category"],
-                    item["score"],
+                    item["sets"],
                     item["target_reps"],
                     load,
                     item["reason"],
                 ),
             )
-            
-        ttk.Label(
-            self.content,
-            text="The score is a transparent design rule: position priority +3, training gap +1/+2, recent training −3, high RPE −2, and progression status +1 or −2. At most two exercises are selected per category.",
-            style="Muted.TLabel",
-            wraplength=780,
-        ).pack(anchor="w", pady=12)
 
 
 def main():
     root = tk.Tk()
-    app = RugbyApp(root) # saving ref to app just in case, though python doesn't strictly need it here
+    RugbyApp(root)
     root.mainloop()
 
 
