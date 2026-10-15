@@ -10,19 +10,30 @@ TARGET_REPS = {
     "General conditioning": 10
 }
 
-# positions for rugby team tracking - added more as we onboarded forwards/backs
-POSITION_PRIORITIES = {
-    "Prop": ["Lower body", "Upper push"],
-    "Hooker": ["Lower body", "Upper pull"],
-    "Lock": ["Lower body", "Upper pull"],
-    "Flanker": ["Lower body", "Upper pull"],
-    "Number eight": ["Lower body", "Upper push"],
-    "Scrum-half": ["Lower body", "Upper pull"],
-    "Fly-half": ["Lower body", "Upper push"],
-    "Centre": ["Lower body", "Upper push"],
-    "Wing": ["Lower body", "Upper pull"],
-    "Full-back": ["Lower body", "Upper pull"],
+TARGET_SETS = {
+    "Strength": 4,
+    "Muscle gain": 3,
+    "Power": 4,
+    "General conditioning": 3,
 }
+
+WORKOUT_TYPES = ["Legs", "Arms", "Full upper body", "Lower body", "Core"]
+
+LEG_WORKOUT_EXERCISES = [
+    "Barbell back squat",
+    "Leg press",
+    "Bulgarian split squat",
+    "Leg extension",
+    "Standing calf raise",
+]
+
+LOWER_BODY_EXERCISES = [
+    "Front squat",
+    "Walking lunges",
+    "Seated leg curl",
+    "Romanian deadlift",
+    "Hip thrust",
+]
 
 
 def calculate_volume(entry):
@@ -176,29 +187,36 @@ def progressive_overload(history, profile):
     return increased, "Increase", "Both comparable sessions met the progression rules."
 
 
-def build_next_workout(exercises, history, profile, today=None):
-    #Scoring exercises, then selecting four while limiting each category to two.
+def exercise_matches_workout(exercise, workout_type):
+    if workout_type == "Legs":
+        return exercise["name"] in LEG_WORKOUT_EXERCISES
+    if workout_type == "Lower body":
+        return exercise["name"] in LOWER_BODY_EXERCISES
+    if workout_type == "Arms":
+        return exercise["category"] == "Biceps" or exercise["category"] == "Triceps"
+    if workout_type == "Full upper body":
+        upper_categories = ["Chest", "Back", "Shoulders", "Biceps", "Triceps"]
+        return exercise["category"] in upper_categories
+    if workout_type == "Core":
+        return exercise["category"] == "Core"
+    return False
+
+
+def build_next_workout(exercises, history, profile, workout_type="Full upper body", today=None):
     today = today or date.today()
     grouped_history = group_history_by_exercise(history)
-    
-    # fallback to Prop if position isn't found, just in case
-    pos = profile.get("position", "Prop")
-    priorities = POSITION_PRIORITIES.get(pos, ["Lower body", "Upper push"])
-    
     candidates = []
 
     for exercise in exercises:
+        if not exercise_matches_workout(exercise, workout_type):
+            continue
+
         exercise_history = grouped_history.get(exercise["id"], [])
         score = 0
         reasons = []
 
-        if exercise["category"] in priorities:
-            score += 3
-            reasons.append("position priority")
-
         if not exercise_history:
             score += 2
-            days_since = None
             reasons.append("not trained yet")
         else:
             latest_date = date.fromisoformat(exercise_history[0]["date"])
@@ -240,20 +258,25 @@ def build_next_workout(exercises, history, profile, today=None):
                 "exercise": exercise["name"],
                 "category": exercise["category"],
                 "score": score,
+                "sets": TARGET_SETS[profile["goal"]],
                 "target_reps": TARGET_REPS[profile["goal"]],
                 "next_weight": next_weight,
                 "action": action,
                 "reason": ", ".join(reasons) or "balanced option",
                 "progression_reason": progression_reason,
-                "days_since": days_since,
             }
         )
 
     selected = []
     category_counts = {}
-    
-    # pick top 4 matching criteria
-    while candidates and len(selected) < 4:
+
+    category_limit = 5
+    if workout_type == "Arms":
+        category_limit = 3
+    elif workout_type == "Full upper body":
+        category_limit = 1
+
+    while candidates and len(selected) < 5:
         best_index = 0
         for index in range(1, len(candidates)):
             if candidates[index]["score"] > candidates[best_index]["score"]:
@@ -263,7 +286,7 @@ def build_next_workout(exercises, history, profile, today=None):
         category = best_exercise["category"]
         category_count = category_counts.get(category, 0)
         
-        if category_count < 2:
+        if category_count < category_limit:
             selected.append(best_exercise)
             category_counts[category] = category_count + 1
 
