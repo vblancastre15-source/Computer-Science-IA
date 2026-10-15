@@ -259,36 +259,45 @@ def get_exercises():
 
 
 def add_workout(user_id, entry):
-    entry = check_workout(entry)
-    
-    #make sure user filled out their profile first
-    user_prof = get_profile(user_id)
-    if user_prof["age"] is None:
+    add_workout_session(user_id, [entry])
+
+
+def add_workout_session(user_id, entries):
+    if not entries:
+        raise ValueError("Add at least one exercise to the workout.")
+
+    validated_entries = []
+    for entry in entries:
+        validated_entries.append(check_workout(entry))
+
+    user_profile = get_profile(user_id)
+    if user_profile["age"] is None:
         raise ValueError("Complete your player profile before logging a workout.")
-        
+
     with closing(connect()) as connection:
-        exercise = connection.execute(
-            "SELECT id FROM exercises WHERE id=?", (entry["exercise_id"],)
-        ).fetchone()
-        
-        if exercise is None:
-            raise ValueError("Choose an exercise from the list.")
-            
-        connection.execute(
-            """INSERT INTO workout_entries
-               (user_id, exercise_id, date, sets, reps, target_reps, weight, rpe)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user_id,
-                entry["exercise_id"],
-                entry["date"],
-                entry["sets"],
-                entry["reps"],
-                entry["target_reps"],
-                entry["weight"],
-                entry["rpe"],
-            ),
-        )
+        for entry in validated_entries:
+            exercise = connection.execute(
+                "SELECT id FROM exercises WHERE id=?", (entry["exercise_id"],)
+            ).fetchone()
+            if exercise is None:
+                raise ValueError("Choose an exercise from the list.")
+
+        for entry in validated_entries:
+            connection.execute(
+                """INSERT INTO workout_entries
+                   (user_id, exercise_id, date, sets, reps, target_reps, weight, rpe)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    entry["exercise_id"],
+                    entry["date"],
+                    entry["sets"],
+                    entry["reps"],
+                    entry["target_reps"],
+                    entry["weight"],
+                    entry["rpe"],
+                ),
+            )
         connection.commit()
 
 
